@@ -29,7 +29,7 @@ REQUIREMENTS
 ------------
 This module should be added to your codebase via Composer
 
-`composer require "drupal/commerce_escrow"
+`composer require "drupal/commerce_escrow`
 
 You must also have an Escrow account or developer access to the account
 you intend to configure for your integration.
@@ -60,7 +60,7 @@ Now that product variation type will get several Escrow specific fields.
 * Brokered: if you are brokering sale of this product between a seller and buyer.
 * Broker Fee percentage: specify the fee which you will charge for brokering service.
 * Broker Fee split: split the broke fee to a buyer or seller or equally to both sides.
-* Escrow Fee: plit the escrow fee to buyer or seller or equally to both sides.
+* Escrow Fee: split the escrow fee to buyer or seller or equally to both sides.
 * Escrow item type: defining the typo of goods to be sold via Escrow.com
 * Inspection period: how long the Escrow offer is valid, between 1 and 30 days.
 * Display Escrow fee information: you can during checkout show estimated fee to be charged on Escrow.com
