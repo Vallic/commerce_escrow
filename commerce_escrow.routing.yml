@@ -1,0 +1,8 @@
+commerce_escrow.webhook:
+  path: '/payment/webhook/escrow'
+  defaults:
+    _controller: '\Drupal\commerce_escrow\Controller\EscrowController::webhook'
+    _title: 'Webhook'
+  methods: [POST]
+  requirements:
+    _access: 'TRUE'

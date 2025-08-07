@@ -1,0 +1,10 @@
+services:
+  commerce_escrow.availability_checker:
+    class: Drupal\commerce_escrow\EscrowItemAvailabilityChecker
+    tags:
+      - { name: commerce_order.availability_checker }
+  commerce_escrow.order_place_subscriber:
+    class: Drupal\commerce_escrow\EventSubscriber\OrderPlaceSubscriber
+    arguments: []
+    tags:
+      - { name: event_subscriber }

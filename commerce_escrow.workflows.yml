@@ -1,0 +1,133 @@
+escrow_workflow:
+  id: order_default
+  group: commerce_order
+  label: 'Escrow Workflow'
+  states:
+    draft:
+      label: Draft
+    validation:
+      label: Validation
+    confirmed:
+      label: Confirmed
+    payment_approved:
+      label: Payment Approved
+    payment_rejected:
+      label: Payment Rejected
+    shipped:
+      label: Buyer sent goods
+    received:
+      label: Seller received goods
+    accepted:
+      label: Buyer accepted goods
+    rejected:
+      label: Buyer rejected goods
+    completed:
+      label: Completed
+    canceled:
+      label: Canceled
+  transitions:
+    place:
+      label: 'Place order'
+      from: [ draft ]
+      to: validation
+    agree:
+      label: 'Buyer Agreed'
+      from: [ draft, validation ]
+      to: confirmed
+    offer_accepted:
+      label: 'Buyer accepted offer'
+      from: [ draft, validation ]
+      to: confirmed
+    payment_approved:
+      label: 'Payment approved'
+      from: [ draft, validation, confirmed ]
+      to: payment_approved
+    payment_rejected:
+      label: 'Payment rejected'
+      from: [ draft, validation, confirmed ]
+      to: payment_rejected
+    ship:
+      label: 'Shipped items'
+      from: [ draft, validation, confirmed, payment_approved ]
+      to: shipped
+    receive:
+      label: 'Received items'
+      from: [ draft, validation, confirmed, payment_approved, shipped ]
+      to: received
+    accept:
+      label: 'Accepted items'
+      from: [ draft, validation, confirmed, payment_approved, shipped, received ]
+      to: accepted
+    reject:
+      label: 'Rejected items'
+      from: [ draft, validation, confirmed, payment_approved, shipped, received ]
+      to: rejected
+    complete:
+      label: 'Complete order'
+      from: [ validation, confirmed, payment_approved, shipped, received, accepted, rejected ]
+      to: completed
+    cancel:
+      label: 'Cancel order'
+      from: [draft, validation, confirmed, payment_approved, payment_rejected, received, shipped, accepted, rejected]
+      to: canceled
+
+escrow_payment:
+  id: escrow_payment
+  group: commerce_payment
+  label: 'Escrow Payment'
+  states:
+    new:
+      label: 'New'
+    pending:
+      label: 'Pending'
+    received:
+      label: 'Received'
+    approved:
+      label: 'Approved'
+    rejected:
+      label: 'Rejected'
+    completed:
+      label: 'Completed'
+    partially_refunded:
+      label: 'Partially refunded'
+    refunded:
+      label: 'Refunded'
+    voided:
+      label: 'Voided'
+  transitions:
+    payment_sent:
+      label: 'Payment sent'
+      from: [new]
+      to: pending
+    payment_received:
+      label: 'Payment received'
+      from: [new, pending, approved, rejected]
+      to: received
+    payment_approved:
+      label: 'Payment approved'
+      from: [new, pending, received, rejected]
+      to: approved
+    payment_rejected:
+      label: 'Payment rejected'
+      from: [new, pending, received, approved]
+      to: rejected
+    payment_disbursed:
+      label: 'Payment received'
+      from: [new, pending, received, approved, rejected]
+      to: completed
+    complete:
+      label: 'Completed'
+      from: [ new, pending, received, approved, rejected ]
+      to: completed
+    partially_refund:
+      label: 'Partially refund payment'
+      from: [completed]
+      to: partially_refunded
+    payment_refunded:
+      label: 'Refund payment'
+      from: [completed, partially_refunded, received, approved, rejected]
+      to: refunded
+    cancel:
+      label: 'Void payment'
+      from: [new, pending, received, approved, rejected]
+      to: voided

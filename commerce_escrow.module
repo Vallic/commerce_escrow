@@ -1,0 +1,64 @@
+<?php
+
+/**
+ * @file
+ * The main module file.
+ */
+
+use Drupal\commerce_escrow\Entity\EscrowItem;
+use Drupal\commerce_escrow\Entity\EscrowItemInterface;
+use Drupal\commerce_order\Adjustment;
+use Drupal\commerce_product\Entity\ProductVariationType;
+
+/**
+ * Implements hook_entity_bundle_info_alter().
+ */
+function commerce_escrow_entity_bundle_info_alter(array &$bundles): void {
+  $enabled_types = commerce_escrow_enabled_types();
+
+  if (!empty($bundles['commerce_product_variation'])) {
+    foreach ($bundles['commerce_product_variation'] as $type => $bundle) {
+      if (in_array($type, $enabled_types, TRUE)) {
+        $bundles['commerce_product_variation'][$type]['class'] = EscrowItem::class;
+      }
+    }
+  }
+}
+
+/**
+ * Get a list of product variation types with an escrow option enabled.
+ */
+function commerce_escrow_enabled_types(): array {
+  $types = [];
+  $product_variation_types = ProductVariationType::loadMultiple();
+  foreach ($product_variation_types as $product_variation_type) {
+    if ($product_variation_type->hasTrait('purchasable_entity_escrow_item')) {
+      $types[] = $product_variation_type->id();
+    }
+  }
+
+  return $types;
+}
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function commerce_escrow_preprocess_commerce_order_total_summary(&$variables): void {
+  /** @var \Drupal\commerce_order\Entity\OrderInterface $order */
+  $order = $variables['order_entity'];
+
+  foreach ($order->getItems() as $item) {
+    $purchased_entity = $item->getPurchasedEntity();
+    if ($purchased_entity instanceof EscrowItemInterface && $purchased_entity->displayFee()) {
+      $fee = $purchased_entity->getFeeEstimates($item->getTotalPrice());
+      $adjustment_fee = new Adjustment([
+        'type' => 'custom',
+        'label' => t('Estimated fees to be paid on Escrow.com'),
+        'amount' => $fee,
+        'total' => $fee,
+      ]);
+      $variables['totals']['adjustments'][] = $adjustment_fee->toArray();
+    }
+  }
+
+}

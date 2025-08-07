@@ -1,0 +1,4 @@
+escrow_event:
+  category: commerce_escrow
+  label: 'Escrow event'
+  template: '<p>{{ description }} ({{ transaction_id }})</p>'

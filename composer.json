@@ -1,0 +1,11 @@
+{
+    "name": "drupal/commerce_escrow",
+    "type": "drupal-module",
+    "description": "Provides Commerce integration for Escrow.com",
+    "homepage": "http://drupal.org/project/commerce_escrow",
+    "license": "GPL-2.0+",
+    "require": {
+        "drupal/core": "^10 || ^11",
+        "drupal/commerce": "^3"
+    }
+}
