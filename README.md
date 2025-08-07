@@ -10,7 +10,7 @@ CONTENTS OF THIS FILE
 INTRODUCTION
 ------------
 This module integrates Drupal Commerce with Escrow.com
-including the Escrow Pay [2] and the Escrow Offer [2].
+including the Escrow Pay [1] and the Escrow Offer [2].
 
 1. https://www.escrow.com/pay/docs
 2. https://www.escrow.com/offer/docs
@@ -29,13 +29,12 @@ REQUIREMENTS
 ------------
 This module should be added to your codebase via Composer
 
-`composer require "drupal/commerce_escrow`
+`composer require "drupal/commerce_escrow"`
 
 You must also have an Escrow account or developer access to the account
 you intend to configure for your integration.
 
 There are no other requirements than [Commerce Core 3](https://www.drupal.org/project/commerce)
-
 You can sign up for one [here](https://www.escrow.com/integrations/signup).
 
 
@@ -93,5 +92,3 @@ $payload = [
 ];
 $client->createTransaction($payload);
 ```
-
-
