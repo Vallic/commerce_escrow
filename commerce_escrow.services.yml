@@ -8,3 +8,8 @@ services:
     arguments: []
     tags:
       - { name: event_subscriber }
+  commerce_escrow.cart_subscriber:
+    class: Drupal\commerce_escrow\EventSubscriber\CartEventSubscriber
+    arguments: []
+    tags:
+      - { name: event_subscriber }

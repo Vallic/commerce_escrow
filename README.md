@@ -33,9 +33,9 @@ This module should be added to your codebase via Composer
 
 You must also have an Escrow account or developer access to the account
 you intend to configure for your integration.
+You can sign up for one [here](https://www.escrow.com/integrations/signup).
 
 There are no other requirements than [Commerce Core 3](https://www.drupal.org/project/commerce)
-You can sign up for one [here](https://www.escrow.com/integrations/signup).
 
 
 CONFIGURATION
