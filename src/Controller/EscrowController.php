@@ -69,24 +69,29 @@ class EscrowController extends ControllerBase {
 
     $payment = $payment_storage->loadByRemoteId($payload['transaction_id']);
     if (!$payment) {
-      // Special case for escrow offer.
-      if ($payload['event_type'] === 'create' && $escrow_offer) {
+      $matched = FALSE;
+      // Special case for escrow offer. We may have a payment in the system,
+      // but without remote id. Try first to find id.
+      if ($payload['event'] === 'create' && $escrow_offer) {
         $payments = $payment_storage->loadMultipleByOrder($order);
         foreach ($payments as $payment) {
           $payment->setRemoteId($payload['transaction_id']);
           $payment->save();
+          $matched = TRUE;
         }
       }
-      $payment = $payment_storage->create([
-        'state' => 'new',
-        'amount' => $order->getBalance(),
-        'payment_gateway' => $order->get('payment_gateway')->entity->id(),
-        'order_id' => $order->id(),
-        'remote_id' => $payload['transaction_id'],
-        'remote_state' => 'create',
-      ]);
+      if (!$matched) {
+        $payment = $payment_storage->create([
+          'state' => 'new',
+          'amount' => $order->getBalance(),
+          'payment_gateway' => $order->get('payment_gateway')->entity->id(),
+          'order_id' => $order->id(),
+          'remote_id' => $payload['transaction_id'],
+          'remote_state' => 'create',
+        ]);
 
-      $payment->save();
+        $payment->save();
+      }
     }
 
     $payment->setRemoteState($payload['event']);
