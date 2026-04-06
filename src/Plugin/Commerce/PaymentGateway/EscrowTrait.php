@@ -245,7 +245,7 @@ trait EscrowTrait {
 
       switch ($escrow_fee_split) {
         case EscrowItemInterface::ESCROW_FEE_PAYS_SELLER:
-          $item_data['fees'][] = [
+          $item_data['fees'] = [
             [
               'payer_customer' => $seller,
               'type' => 'escrow',
