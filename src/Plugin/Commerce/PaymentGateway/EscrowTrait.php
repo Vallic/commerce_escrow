@@ -8,7 +8,10 @@ use Drupal\commerce_escrow\EscrowClientInterface;
 use Drupal\commerce_escrow\Event\EscrowEvents;
 use Drupal\commerce_escrow\Event\EscrowOrderPayloadEvent;
 use Drupal\commerce_order\Entity\OrderInterface;
+use Drupal\commerce_payment\Entity\PaymentGatewayInterface;
 use Drupal\commerce_payment\Entity\PaymentInterface;
+use Drupal\Component\Utility\Crypt;
+use Drupal\Core\Entity\EntityFormInterface;
 use Drupal\Core\Extension\ModuleExtensionList;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Logger\LoggerChannelTrait;
@@ -59,6 +62,7 @@ trait EscrowTrait {
       'api_key' => '',
       'email' => '',
       'logging' => FALSE,
+      'webhook_secret' => '',
     ] + parent::defaultConfiguration();
   }
 
@@ -88,6 +92,30 @@ trait EscrowTrait {
       '#title' => $this->t('Log API calls'),
       '#default_value' => $this->configuration['logging'],
     ];
+
+    // The payment gateway form creates the plugin without its parent entity.
+    if (!$this->parentEntity) {
+      $form_object = $form_state->getFormObject();
+      if ($form_object instanceof EntityFormInterface && $form_object->getEntity() instanceof PaymentGatewayInterface) {
+        $this->parentEntity = $form_object->getEntity();
+      }
+    }
+
+    $webhook_url = $this->getWebhookUrl();
+    $form['webhook_url'] = [
+      '#type' => 'item',
+      '#title' => $this->t('Webhook URL'),
+      '#plain_text' => $webhook_url ? $webhook_url->toString() : $this->t('Save the payment gateway to generate the webhook URL.'),
+      '#description' => $this->t('Register this URL as a webhook on Escrow.com. It contains a secret, keep it private like the API key.'),
+    ];
+
+    if ($webhook_url) {
+      $form['regenerate_webhook_secret'] = [
+        '#type' => 'checkbox',
+        '#title' => $this->t('Regenerate the webhook URL'),
+        '#description' => $this->t('The current URL stops working immediately, update the webhook on Escrow.com afterwards.'),
+      ];
+    }
 
     return $form;
   }
@@ -132,6 +160,10 @@ trait EscrowTrait {
       $this->configuration['api_key'] = $values['api_key'];
       $this->configuration['email'] = $values['email'];
       $this->configuration['logging'] = $values['logging'];
+
+      if (empty($this->configuration['webhook_secret']) || !empty($values['regenerate_webhook_secret'])) {
+        $this->configuration['webhook_secret'] = Crypt::randomBytesBase64(32);
+      }
     }
   }
 
@@ -353,6 +385,48 @@ trait EscrowTrait {
    */
   public function getEscrowByOder(OrderInterface $order): array {
     return $this->escrowClient->getTransactionByReference($order->id());
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getTransaction(int $transaction_id): array {
+    return $this->escrowClient->getTransaction($transaction_id);
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function loadOrderPayments(OrderInterface $order): array {
+    /** @var \Drupal\commerce_payment\PaymentStorageInterface $payment_storage */
+    $payment_storage = $this->entityTypeManager->getStorage('commerce_payment');
+    $gateway_id = $this->parentEntity?->id();
+
+    return array_filter($payment_storage->loadMultipleByOrder($order), static function (PaymentInterface $payment) use ($gateway_id) {
+      return $gateway_id !== NULL && $payment->getPaymentGatewayId() === $gateway_id;
+    });
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getWebhookUrl(): ?Url {
+    if (empty($this->configuration['webhook_secret']) || !$this->parentEntity || $this->parentEntity->isNew()) {
+      return NULL;
+    }
+
+    return Url::fromRoute('commerce_escrow.webhook', [
+      'commerce_payment_gateway' => $this->parentEntity->id(),
+      'token' => $this->configuration['webhook_secret'],
+    ], ['absolute' => TRUE]);
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function isValidWebhookToken(string $token): bool {
+    $secret = (string) ($this->configuration['webhook_secret'] ?? '');
+    return $secret !== '' && hash_equals($secret, $token);
   }
 
 }

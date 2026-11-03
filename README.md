@@ -68,7 +68,19 @@ Now that product variation type will get several Escrow specific fields.
 * In stock: a flag to determine if product is in stock, depends on Single item logic.
 
 ## Webhook configuration
-Go to Escrow.com and set webhook to `https://yourwebsite.com/payment/webhook/escrow`
+Each Escrow payment gateway has its own webhook URL with a secret token,
+shown on the payment gateway configuration form after the gateway is saved:
+`https://yourwebsite.com/payment/webhook/escrow/{payment_gateway}/{token}`
+
+Register that URL as a webhook on Escrow.com. Keep it private like the API key,
+and regenerate it from the same form if it leaks. Escrow.com sends every event
+on the account to every registered webhook, so when several gateways share an
+Escrow.com account, register the URL of each of them. Each webhook processes
+only orders paid through its own gateway.
+
+Escrow.com does not sign webhooks. Every webhook is therefore verified by
+fetching the transaction from the Escrow.com API. The transaction must belong
+to the order and confirm the event before the order or payment is updated.
 
 ## Custom configuration / modifications.
 You don't need to use the provided order and payment workflow.
@@ -76,6 +88,8 @@ The provided product variation type `Escrow item` is a requirement to be used.
 
 The automated order and payment states can be stopped via event subscriber
 `\Drupal\commerce_escrow\Event\EscrowEvents::ESCROW_WEBHOOK` and `setStopWebhook` method.
+Use `getTransaction()` of that event for the transaction verified with the
+Escrow.com API, rather than trusting the webhook payload.
 
 You can enrich or alter transaction payload via event subscriber
 `\Drupal\commerce_escrow\Event\EscrowEvents::ESCROW_ORDER_PAYLOAD`

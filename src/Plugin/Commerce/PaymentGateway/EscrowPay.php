@@ -33,4 +33,24 @@ class EscrowPay extends OffsitePaymentGatewayBase implements EscrowGatewayInterf
     return $this->escrowClient->createEscrowPay($payload);
   }
 
+  /**
+   * {@inheritdoc}
+   */
+  public function isOrderTransaction(OrderInterface $order, array $transaction): bool {
+    $transaction_id = (string) ($transaction['id'] ?? '');
+    if ($transaction_id === '') {
+      return FALSE;
+    }
+
+    // Escrow Pay transaction is created during checkout and its id
+    // is stored as the remote id of the payment.
+    foreach ($this->loadOrderPayments($order) as $payment) {
+      if ((string) $payment->getRemoteId() === $transaction_id) {
+        return TRUE;
+      }
+    }
+
+    return FALSE;
+  }
+
 }

@@ -12,7 +12,7 @@ class EscrowWebhookEvent extends Event {
   /**
    * Constructs a new EscrowWebhookEvent object.
    */
-  public function __construct(protected OrderInterface $order, protected array $payload) {}
+  public function __construct(protected OrderInterface $order, protected array $payload, protected array $transaction = []) {}
 
   /**
    * Gets the webhook payload.
@@ -22,6 +22,15 @@ class EscrowWebhookEvent extends Event {
    */
   public function getPayload(): array {
     return $this->payload;
+  }
+
+  /**
+   * Gets the transaction fetched from Escrow.com, verified for the order.
+   *
+   * Prefer this over the payload, as webhooks are not signed by Escrow.com.
+   */
+  public function getTransaction(): array {
+    return $this->transaction;
   }
 
   /**
