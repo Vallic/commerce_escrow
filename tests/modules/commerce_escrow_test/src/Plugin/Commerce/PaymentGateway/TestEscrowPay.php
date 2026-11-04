@@ -5,7 +5,9 @@ namespace Drupal\commerce_escrow_test\Plugin\Commerce\PaymentGateway;
 use Drupal\commerce_escrow\Plugin\Commerce\PaymentGateway\EscrowPay;
 use Drupal\commerce_escrow\PluginForm\OffsiteRedirect\PaymentOffsiteForm;
 use Drupal\commerce_payment\Attribute\CommercePaymentGateway;
+use Drupal\Core\State\StateInterface;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
  * An Escrow Pay gateway that reads transactions from State.
@@ -24,10 +26,25 @@ use Drupal\Core\StringTranslation\TranslatableMarkup;
 class TestEscrowPay extends EscrowPay {
 
   /**
+   * The state holding the transaction.
+   */
+  protected StateInterface $state;
+
+  /**
+   * {@inheritdoc}
+   */
+  public static function create(ContainerInterface $container, array $configuration, $plugin_id, $plugin_definition): self {
+    /** @var static $instance */
+    $instance = parent::create($container, $configuration, $plugin_id, $plugin_definition);
+    $instance->state = $container->get('state');
+    return $instance;
+  }
+
+  /**
    * {@inheritdoc}
    */
   public function getTransaction(int $transaction_id): array {
-    return \Drupal::state()->get('commerce_escrow_test.transaction', []) + ['id' => $transaction_id];
+    return $this->state->get('commerce_escrow_test.transaction', []) + ['id' => $transaction_id];
   }
 
 }
