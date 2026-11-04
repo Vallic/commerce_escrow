@@ -1,0 +1,6 @@
+commerce_escrow.settings:
+  title: 'Escrow settings'
+  route_name: 'commerce_escrow.settings'
+  parent: 'commerce_payment.configuration'
+  description: 'The webhook URL for Escrow.com.'
+  weight: 20

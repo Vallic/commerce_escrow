@@ -4,6 +4,7 @@ namespace Drupal\commerce_escrow;
 
 use Drupal\Component\Utility\Crypt;
 use Drupal\Core\Config\ConfigFactoryInterface;
+use Drupal\Core\Url;
 
 /**
  * The secret at the end of the webhook URL, shared by all Escrow gateways.
@@ -36,6 +37,17 @@ class EscrowWebhookSecret {
   public function get(): string {
     $secret = $this->current();
     return $secret !== '' || $this->isOverridden() ? $secret : $this->regenerate();
+  }
+
+  /**
+   * Returns the webhook URL to register on Escrow.com.
+   *
+   * @return \Drupal\Core\Url|null
+   *   The URL, or NULL if settings.php overrides the secret with nothing.
+   */
+  public function url(): ?Url {
+    $secret = $this->get();
+    return $secret === '' ? NULL : Url::fromRoute('commerce_escrow.webhook', ['token' => $secret], ['absolute' => TRUE]);
   }
 
   /**

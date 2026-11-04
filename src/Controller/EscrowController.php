@@ -6,7 +6,6 @@ use Drupal\commerce_escrow\Entity\EscrowItemInterface;
 use Drupal\commerce_escrow\EscrowWebhookSecret;
 use Drupal\commerce_escrow\Plugin\Commerce\PaymentGateway\EscrowGatewayInterface;
 use Drupal\commerce_order\Entity\OrderInterface;
-use Drupal\commerce_payment\Entity\PaymentGatewayInterface;
 use Drupal\commerce_price\Price;
 use Drupal\commerce_escrow\Event\EscrowEvents;
 use Drupal\commerce_escrow\Event\EscrowWebhookEvent;
@@ -69,35 +68,13 @@ class EscrowController extends ControllerBase {
   }
 
   /**
-   * Checks the secret token of a payment gateway's webhook URL from 1.1.0.
-   */
-  public function gatewayAccess(PaymentGatewayInterface $commerce_payment_gateway, string $token): AccessResultInterface {
-    $plugin = $commerce_payment_gateway->getPlugin();
-    return AccessResult::allowedIf($plugin instanceof EscrowGatewayInterface && $plugin->isValidWebhookToken($token))->setCacheMaxAge(0);
-  }
-
-  /**
-   * Handles the webhook shared by all Escrow payment gateways.
-   */
-  public function webhook(Request $request): JsonResponse {
-    return $this->handleWebhook($request);
-  }
-
-  /**
-   * Handles a payment gateway's webhook from 1.1.0, for its own orders only.
-   */
-  public function gatewayWebhook(PaymentGatewayInterface $commerce_payment_gateway, Request $request): JsonResponse {
-    return $this->handleWebhook($request, $commerce_payment_gateway);
-  }
-
-  /**
-   * Handles a webhook, one at a time for each order.
+   * Handles the webhook shared by all Escrow gateways, one at a time per order.
    *
    * Escrow.com retries a webhook that fails or takes over 10 seconds, so the
    * same event can arrive again, even while the first is still being handled.
    * The one that waits then finds the order already updated.
    */
-  protected function handleWebhook(Request $request, ?PaymentGatewayInterface $only_gateway = NULL): JsonResponse {
+  public function webhook(Request $request): JsonResponse {
     $payload = Json::decode($request->getContent());
 
     if (!$this->isValidPayload($payload)) {
@@ -114,7 +91,7 @@ class EscrowController extends ControllerBase {
     }
 
     try {
-      return $this->processWebhook($payload, $only_gateway);
+      return $this->processWebhook($payload);
     }
     finally {
       $this->lock->release($lock_name);
@@ -130,7 +107,7 @@ class EscrowController extends ControllerBase {
    *
    * @see https://www.escrow.com/api/docs/webhooks
    */
-  protected function processWebhook(array $payload, ?PaymentGatewayInterface $only_gateway): JsonResponse {
+  protected function processWebhook(array $payload): JsonResponse {
     $transaction_id = (int) $payload['transaction_id'];
     $logger = $this->getLogger('commerce_escrow');
     $order_storage = $this->entityTypeManager->getStorage('commerce_order');
@@ -146,9 +123,6 @@ class EscrowController extends ControllerBase {
     // Escrow.com sends events of all transactions on the account to every
     // webhook, ignore orders which are not paid through an Escrow gateway.
     if (!$payment_gateway_plugin instanceof EscrowGatewayInterface) {
-      return new JsonResponse([]);
-    }
-    if ($only_gateway && $only_gateway->id() !== $commerce_payment_gateway->id()) {
       return new JsonResponse([]);
     }
 

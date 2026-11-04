@@ -5,7 +5,6 @@ namespace Drupal\commerce_escrow\Plugin\Commerce\PaymentGateway;
 use Drupal\commerce_escrow\Entity\EscrowItemInterface;
 use Drupal\commerce_escrow\EscrowClient;
 use Drupal\commerce_escrow\EscrowClientInterface;
-use Drupal\commerce_escrow\EscrowWebhookSecret;
 use Drupal\commerce_escrow\Event\EscrowEvents;
 use Drupal\commerce_escrow\Event\EscrowOrderPayloadEvent;
 use Drupal\commerce_order\Entity\OrderInterface;
@@ -24,7 +23,6 @@ trait EscrowTrait {
   protected EventDispatcherInterface $eventDispatcher;
   protected ModuleExtensionList $moduleExtensionList;
   protected EscrowClientInterface $escrowClient;
-  protected EscrowWebhookSecret $webhookSecret;
 
   /**
    * {@inheritdoc}
@@ -34,7 +32,6 @@ trait EscrowTrait {
     $instance->minorUnitsConverter = $container->get('commerce_price.minor_units_converter');
     $instance->eventDispatcher = $container->get('event_dispatcher');
     $instance->moduleExtensionList = $container->get('extension.list.module');
-    $instance->webhookSecret = $container->get('commerce_escrow.webhook_secret');
     $instance->init();
     return $instance;
   }
@@ -62,7 +59,6 @@ trait EscrowTrait {
       'api_key' => '',
       'email' => '',
       'logging' => FALSE,
-      'webhook_secret' => '',
     ] + parent::defaultConfiguration();
   }
 
@@ -93,30 +89,13 @@ trait EscrowTrait {
       '#default_value' => $this->configuration['logging'],
     ];
 
-    $webhook_url = $this->getWebhookUrl();
-    $form['webhook_url'] = [
+    $form['webhook'] = [
       '#type' => 'item',
-      '#title' => $this->t('Webhook URL'),
-      '#plain_text' => $webhook_url ? $webhook_url->toString() : $this->t('Not available: the webhook secret is overridden with an empty value in settings.php.'),
-      '#description' => $this->t('Register this URL once on each Escrow.com account, as all Escrow payment gateways share it. It contains a secret, keep it private like the API key.'),
+      '#title' => $this->t('Webhook'),
+      '#markup' => $this->t('All Escrow payment gateways share one webhook URL, shown on the <a href=":url">Escrow settings</a> page.', [
+        ':url' => Url::fromRoute('commerce_escrow.settings')->toString(),
+      ]),
     ];
-
-    // A value from settings.php can't be changed here.
-    if (!$this->webhookSecret->isOverridden()) {
-      $form['regenerate_webhook_secret'] = [
-        '#type' => 'checkbox',
-        '#title' => $this->t('Regenerate the webhook URL'),
-        '#description' => $this->t('The current URL stops working immediately for all Escrow payment gateways, update the webhook on Escrow.com afterwards. The secret is stored in configuration: override it in settings.php to keep it out of the database and exported configuration.'),
-      ];
-    }
-
-    if (!empty($this->configuration['webhook_secret'])) {
-      $form['remove_gateway_webhook'] = [
-        '#type' => 'checkbox',
-        '#title' => $this->t('Stop accepting the old webhook URL of this payment gateway'),
-        '#description' => $this->t('Tick this once the shared URL is registered on Escrow.com and the old one is deleted there.'),
-      ];
-    }
 
     return $form;
   }
@@ -155,19 +134,12 @@ trait EscrowTrait {
    * {@inheritdoc}
    */
   public function submitConfigurationForm(array &$form, FormStateInterface $form_state) {
-    // The parent starts the configuration over.
-    $gateway_secret = $this->configuration['webhook_secret'] ?? '';
     parent::submitConfigurationForm($form, $form_state);
     if (!$form_state->getErrors()) {
       $values = $form_state->getValue($form['#parents']);
       $this->configuration['api_key'] = $values['api_key'];
       $this->configuration['email'] = $values['email'];
       $this->configuration['logging'] = $values['logging'];
-
-      if (!empty($values['regenerate_webhook_secret'])) {
-        $this->webhookSecret->regenerate();
-      }
-      $this->configuration['webhook_secret'] = empty($values['remove_gateway_webhook']) ? $gateway_secret : '';
     }
   }
 
@@ -409,24 +381,6 @@ trait EscrowTrait {
     return array_filter($payment_storage->loadMultipleByOrder($order), static function (PaymentInterface $payment) use ($gateway_id) {
       return $gateway_id !== NULL && $payment->getPaymentGatewayId() === $gateway_id;
     });
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public function getWebhookUrl(): ?Url {
-    $secret = $this->webhookSecret->get();
-    return $secret === '' ? NULL : Url::fromRoute('commerce_escrow.webhook', [
-      'token' => $secret,
-    ], ['absolute' => TRUE]);
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public function isValidWebhookToken(string $token): bool {
-    $secret = (string) ($this->configuration['webhook_secret'] ?? '');
-    return $secret !== '' && hash_equals($secret, $token);
   }
 
 }

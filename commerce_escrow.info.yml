@@ -2,6 +2,7 @@ name: Commerce Escrow
 type: module
 description: 'Provides Commerce integration for Escrow.com'
 package: Commerce (contrib)
+configure: commerce_escrow.settings
 core_version_requirement: ^11 || ^12
 dependencies:
   - commerce:commerce_payment

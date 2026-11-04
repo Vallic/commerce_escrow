@@ -5,7 +5,6 @@ namespace Drupal\commerce_escrow\Plugin\Commerce\PaymentGateway;
 use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_payment\Entity\PaymentInterface;
 use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\SupportsVoidsInterface;
-use Drupal\Core\Url;
 
 interface EscrowGatewayInterface extends SupportsVoidsInterface {
 
@@ -44,18 +43,5 @@ interface EscrowGatewayInterface extends SupportsVoidsInterface {
    *   The payments.
    */
   public function loadOrderPayments(OrderInterface $order): array;
-
-  /**
-   * Get the webhook URL to register on Escrow.com, shared by all gateways.
-   *
-   * @return \Drupal\Core\Url|null
-   *   The URL, or NULL if settings.php overrides the secret with nothing.
-   */
-  public function getWebhookUrl(): ?Url;
-
-  /**
-   * Validate the secret token of this gateway's own webhook URL from 1.1.0.
-   */
-  public function isValidWebhookToken(string $token): bool;
 
 }

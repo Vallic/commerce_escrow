@@ -3,6 +3,7 @@
 namespace Drupal\Tests\commerce_escrow\Kernel;
 
 use Drupal\commerce_escrow\Controller\EscrowController;
+use Drupal\commerce_escrow\Form\EscrowSettingsForm;
 use Drupal\commerce_order\Entity\Order;
 use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_order\Entity\OrderItem;
@@ -15,6 +16,7 @@ use Drupal\commerce_price\Price;
 use Drupal\Component\Serialization\Json;
 use Drupal\Core\Form\FormState;
 use Drupal\Core\Lock\LockBackendInterface;
+use Drupal\Core\Url;
 use Drupal\Tests\commerce_order\Kernel\OrderKernelTestBase;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
@@ -74,15 +76,14 @@ class EscrowWebhookTest extends OrderKernelTestBase {
   }
 
   /**
-   * Tests that the gateways share one URL, ending in the secret.
+   * Tests the URL, ending in the secret, with nothing on the gateways.
    */
-  public function testSharedUrl(): void {
-    $one = $this->gateways['one']->getPlugin()->getWebhookUrl()->toString();
-    $this->assertSame($one, $this->gateways['two']->getPlugin()->getWebhookUrl()->toString());
-    $this->assertStringEndsWith('/payment/webhook/escrow/' . $this->secret(), $one);
+  public function testUrl(): void {
+    $url = $this->container->get('commerce_escrow.webhook_secret')->url()->toString();
+    $this->assertStringEndsWith('/payment/webhook/escrow/' . $this->secret(), $url);
     $this->assertSame(43, strlen($this->secret()));
-    $this->assertEmpty($this->gateways['one']->getPluginConfiguration()['webhook_secret'] ?? '', 'The secret is not on the gateway.');
     $this->assertSame($this->secret(), $this->config('commerce_escrow.settings')->get('webhook_secret'));
+    $this->assertArrayNotHasKey('webhook_secret', $this->gateways['one']->getPluginConfiguration());
   }
 
   /**
@@ -92,14 +93,15 @@ class EscrowWebhookTest extends OrderKernelTestBase {
     [$order, $payment] = $this->orderOn($this->gateways['one']);
     $event = $this->event('payment_approved', $order, $payment);
     $secret = $this->container->get('commerce_escrow.webhook_secret');
-    $plugin = $this->gateways['one']->getPlugin();
 
     $this->override('from-settings-php');
     $this->assertTrue($secret->isOverridden());
     $this->assertSame('from-settings-php', $secret->get());
-    $this->assertStringEndsWith('/payment/webhook/escrow/from-settings-php', $plugin->getWebhookUrl()->toString());
+    $this->assertStringEndsWith('/payment/webhook/escrow/from-settings-php', $secret->url()->toString());
     $this->assertSame('', (string) $this->container->get('config.factory')->getEditable('commerce_escrow.settings')->get('webhook_secret'), 'Nothing is stored.');
-    $this->assertArrayNotHasKey('regenerate_webhook_secret', $plugin->buildConfigurationForm(['#parents' => []], new FormState()));
+    $form = $this->settingsForm();
+    $this->assertStringEndsWith('/payment/webhook/escrow/from-settings-php', (string) $form['webhook_url']['#plain_text']);
+    $this->assertArrayNotHasKey('actions', $form, 'It can only be changed in settings.php.');
     $this->assertSame(200, $this->post('/payment/webhook/escrow/from-settings-php', $event, $this->secured())->getStatusCode());
     $this->assertSame('payment_approved', $this->reload($order)->getState()->getId());
 
@@ -123,14 +125,13 @@ class EscrowWebhookTest extends OrderKernelTestBase {
     $this->secret();
     $this->override($value);
     $secret = $this->container->get('commerce_escrow.webhook_secret');
-    $plugin = $this->gateways['one']->getPlugin();
 
     $this->assertSame('', $secret->get());
     $this->assertFalse($secret->isValid(''));
-    $this->assertNull($plugin->getWebhookUrl());
-    $form = $plugin->buildConfigurationForm(['#parents' => []], new FormState());
+    $this->assertNull($secret->url());
+    $form = $this->settingsForm();
     $this->assertStringContainsString('overridden with an empty value', (string) $form['webhook_url']['#plain_text']);
-    $this->assertArrayNotHasKey('regenerate_webhook_secret', $form);
+    $this->assertArrayNotHasKey('actions', $form);
     [$order, $payment] = $this->orderOn($this->gateways['one']);
     $this->assertSame(403, $this->post('/payment/webhook/escrow/anything', $this->event('payment_approved', $order, $payment), $this->secured())->getStatusCode());
     $this->assertSame('validation', $this->reload($order)->getState()->getId());
@@ -310,80 +311,89 @@ class EscrowWebhookTest extends OrderKernelTestBase {
   }
 
   /**
-   * Tests the webhook settings on the payment gateway form.
+   * Tests the settings page.
    */
-  public function testGatewayForm(): void {
-    $plugin = $this->gateways['one']->getPlugin();
-    $submit = function (array $values) use ($plugin): void {
-      $form_state = new FormState();
-      $form = $plugin->buildConfigurationForm(['#parents' => []], $form_state);
-      $form_state->setValues($values + [
-        'mode' => 'test',
-        'display_label' => 'Escrow',
-        'payment_method_types' => [],
-        'collect_billing_information' => TRUE,
-        'api_key' => 'key',
-        'email' => 'seller@example.com',
-        'logging' => 0,
-      ]);
-      $plugin->submitConfigurationForm($form, $form_state);
-    };
+  public function testSettingsPage(): void {
+    $link = $this->container->get('plugin.manager.menu.link')->getDefinition('commerce_escrow.settings');
+    $this->assertSame('commerce_payment.configuration', $link['parent']);
+    $url = Url::fromRoute('commerce_escrow.settings');
+    $this->assertSame('/admin/commerce/config/payment/escrow', $url->toString());
+    $this->assertTrue($url->access($this->createUser(['administer commerce_payment_gateway'])));
+    $this->assertFalse($url->access($this->createUser(['access commerce administration pages'])));
 
-    // A gateway that isn't saved yet shows the URL too.
-    $form = PaymentGateway::create(['id' => 'new', 'plugin' => 'test_escrow_pay'])->getPlugin()->buildConfigurationForm(['#parents' => []], new FormState());
-    $this->assertSame($plugin->getWebhookUrl()->toString(), $form['webhook_url']['#plain_text']);
-    $this->assertArrayNotHasKey('remove_gateway_webhook', $form);
-
-    // Saving creates no secret of its own, and keeps the shared one.
     $secret = $this->secret();
-    $submit([]);
-    $this->assertSame('', $plugin->getConfiguration()['webhook_secret']);
-    $this->assertSame($secret, $this->secret());
+    $form = $this->settingsForm();
+    $this->assertStringEndsWith('/payment/webhook/escrow/' . $secret, (string) $form['webhook_url']['#plain_text']);
+    $this->assertSame($secret, $this->secret(), 'Viewing the page keeps the secret.');
 
-    // Regenerating changes it for every gateway.
-    $submit(['regenerate_webhook_secret' => 1]);
+    $form_state = (new FormState())->setValues(['op' => 'Regenerate the webhook URL']);
+    $this->container->get('form_builder')->submitForm(EscrowSettingsForm::class, $form_state);
+    $this->assertSame([], $form_state->getErrors());
     $this->assertNotSame($secret, $this->secret());
-    $this->assertStringEndsWith($this->secret(), $this->gateways['two']->getPlugin()->getWebhookUrl()->toString());
-
-    // The old URL's secret stays until it is removed.
-    $plugin->setConfiguration(['webhook_secret' => 'old-secret'] + $plugin->getConfiguration());
-    $this->assertArrayHasKey('remove_gateway_webhook', $plugin->buildConfigurationForm(['#parents' => []], new FormState()));
-    $submit([]);
-    $this->assertSame('old-secret', $plugin->getConfiguration()['webhook_secret']);
-    $submit(['remove_gateway_webhook' => 1]);
-    $this->assertSame('', $plugin->getConfiguration()['webhook_secret']);
+    $this->assertStringEndsWith($this->secret(), (string) $this->settingsForm()['webhook_url']['#plain_text']);
   }
 
   /**
-   * Tests the per gateway URL of 1.1.0, and retiring it.
+   * Tests the payment gateway form, which only points to the settings page.
    */
-  public function testGatewayUrl(): void {
-    $configuration = $this->gateways['one']->getPluginConfiguration();
-    $this->gateways['one']->setPluginConfiguration(['webhook_secret' => 'old-secret'] + $configuration)->save();
-    $old = '/payment/webhook/escrow/one/old-secret';
+  public function testGatewayForm(): void {
+    $plugin = $this->gateways['one']->getPlugin();
+    $form_state = new FormState();
+    $form = $plugin->buildConfigurationForm(['#parents' => []], $form_state);
+    $this->assertStringContainsString('/admin/commerce/config/payment/escrow', (string) $form['webhook']['#markup']);
+    $this->assertArrayNotHasKey('webhook_url', $form);
+    $this->assertNull($this->config('commerce_escrow.settings')->get('webhook_secret') ?: NULL, 'Opening it creates no secret.');
 
-    // It handles its own gateway's orders, and leaves the others alone.
-    [$other, $other_payment] = $this->orderOn($this->gateways['two']);
-    $this->assertSame(200, $this->post($old, $this->event('payment_approved', $other, $other_payment), $this->secured())->getStatusCode());
-    $this->assertSame('validation', $this->reload($other)->getState()->getId());
+    $form_state->setValues([
+      'mode' => 'test',
+      'display_label' => 'Escrow',
+      'payment_method_types' => [],
+      'collect_billing_information' => TRUE,
+      'api_key' => 'key',
+      'email' => 'seller@example.com',
+      'logging' => 0,
+    ]);
+    $plugin->submitConfigurationForm($form, $form_state);
+    $this->assertSame('key', $plugin->getConfiguration()['api_key']);
+    $this->assertArrayNotHasKey('webhook_secret', $plugin->getConfiguration());
+  }
 
-    // The same event on both URLs during the move counts once.
+  /**
+   * Tests that the URLs per gateway from 1.1 are gone.
+   */
+  public function testGatewayUrlIsGone(): void {
     [$order, $payment] = $this->orderOn($this->gateways['one']);
     $event = $this->event('payment_approved', $order, $payment);
-    $this->assertSame(200, $this->post($old, $event, $this->secured())->getStatusCode());
-    $this->assertSame(200, $this->post($this->url(), $event, $this->secured())->getStatusCode());
-    $this->assertSame('payment_approved', $this->reload($order)->getState()->getId());
-    $this->assertCount(1, $this->logs($order));
+    $this->assertSame(404, $this->post('/payment/webhook/escrow/one/' . $this->secret(), $event, $this->secured())->getStatusCode());
+    $this->assertSame('validation', $this->reload($order)->getState()->getId());
+  }
 
-    // The other gateway's secret doesn't open this one's URL, nor does the
-    // shared one.
-    $this->assertSame(403, $this->post('/payment/webhook/escrow/two/old-secret', $event, $this->secured())->getStatusCode());
-    $this->assertSame(403, $this->post('/payment/webhook/escrow/one/' . $this->secret(), $event, $this->secured())->getStatusCode());
+  /**
+   * Tests removing the secrets gateways had in 1.1.
+   */
+  public function testPostUpdate(): void {
+    $name = 'commerce_payment.commerce_payment_gateway.old';
+    $config_factory = $this->container->get('config.factory');
+    $config_factory->getEditable($name)->setData([
+      'id' => 'old',
+      'label' => 'Old',
+      'plugin' => 'escrow_offer',
+      'configuration' => ['api_key' => 'stored', 'webhook_secret' => 'old-secret'],
+    ])->save();
+    $other = 'commerce_payment.commerce_payment_gateway.one';
+    $other_data = $config_factory->getEditable($other)->getRawData();
 
-    // Without its secret, it is closed.
-    $this->gateways['one']->setPluginConfiguration(['webhook_secret' => ''] + $configuration)->save();
-    $this->assertSame(403, $this->post($old, $event, $this->secured())->getStatusCode());
-    $this->assertSame(403, $this->post('/payment/webhook/escrow/one/', $event, $this->secured())->getStatusCode());
+    // An override from settings.php must not end up in the configuration.
+    $GLOBALS['config'][$name]['configuration']['api_key'] = 'from-settings-php';
+    $config_factory->reset($name);
+
+    $this->container->get('module_handler')->loadInclude('commerce_escrow', 'php', 'commerce_escrow.post_update');
+    commerce_escrow_post_update_remove_gateway_webhook_secrets();
+
+    $configuration = $config_factory->getEditable($name)->get('configuration');
+    $this->assertArrayNotHasKey('webhook_secret', $configuration);
+    $this->assertSame('stored', $configuration['api_key']);
+    $this->assertSame($other_data, $config_factory->getEditable($other)->getRawData());
   }
 
   /**
@@ -457,6 +467,13 @@ class EscrowWebhookTest extends OrderKernelTestBase {
     // context on GET. Each webhook is a new process on a real site.
     $this->container->get('router.no_access_checks')->getContext()->setMethod('POST');
     return $this->container->get('http_kernel')->handle($request);
+  }
+
+  /**
+   * Returns the built settings form.
+   */
+  protected function settingsForm(): array {
+    return $this->container->get('form_builder')->getForm(EscrowSettingsForm::class);
   }
 
   /**

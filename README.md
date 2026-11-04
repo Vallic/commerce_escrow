@@ -68,8 +68,8 @@ Now that product variation type will get several Escrow specific fields.
 * In stock: a flag to determine if product is in stock, depends on Single item logic.
 
 ## Webhook configuration
-All Escrow payment gateways share one webhook URL with a secret token, shown on
-the configuration form of any of them:
+All Escrow payment gateways share one webhook URL with a secret token, shown under
+*Commerce > Configuration > Payment > Escrow settings*:
 `https://yourwebsite.com/payment/webhook/escrow/{token}`
 
 Register that URL as a webhook on Escrow.com, once on each Escrow.com account
@@ -87,17 +87,12 @@ $config['commerce_escrow.settings']['webhook_secret'] = getenv('ESCROW_WEBHOOK_S
 
 Generate the value with `openssl rand -hex 32`. It may hold only letters, digits,
 `-` and `_`. If the variable is not set, the webhook stays closed rather than
-falling back to another value, and the payment gateway form says so. Without an
-override, you can regenerate the token from the same form if it leaks.
+falling back to another value, and the settings page says so. Without an override,
+you can regenerate the token on the same page if it leaks.
 
 Configuration imports remove settings that aren't exported, so if your deployment
 imports configuration, also export `commerce_escrow.settings`. With the override
 in place the exported value stays empty.
-
-Upgrading from 1.1.0, where each gateway had its own URL: those keep working, for
-that gateway's orders. Register the shared URL and delete the old ones on
-Escrow.com, then tick *Stop accepting the old webhook URL* on each gateway. An
-event that arrives on both in between is safe.
 
 Escrow.com retries webhooks, so the same event can arrive more than once. Webhooks
 of one order are handled one at a time, and a repeat changes nothing on the order
