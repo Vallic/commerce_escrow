@@ -2,6 +2,9 @@ services:
   commerce_escrow.webhook_secret:
     class: Drupal\commerce_escrow\EscrowWebhookSecret
     arguments: ['@config.factory']
+  commerce_escrow.offer_orders:
+    class: Drupal\commerce_escrow\EscrowOfferOrders
+    arguments: ['@entity_type.manager', '@datetime.time']
   commerce_escrow.availability_checker:
     class: Drupal\commerce_escrow\EscrowItemAvailabilityChecker
     tags:

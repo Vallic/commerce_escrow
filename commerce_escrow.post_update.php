@@ -6,9 +6,9 @@
  */
 
 /**
- * Remove the webhook secrets each Escrow payment gateway had in 1.1.
+ * Clean up Escrow payment gateway settings that are no longer used.
  */
-function commerce_escrow_post_update_remove_gateway_webhook_secrets(): void {
+function commerce_escrow_post_update_unused_gateway_settings(): void {
   $config_factory = \Drupal::configFactory();
   foreach ($config_factory->listAll('commerce_payment.commerce_payment_gateway.') as $name) {
     // Editable configuration, as saving a loaded gateway would write any

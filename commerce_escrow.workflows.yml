@@ -14,9 +14,9 @@ escrow_workflow:
     payment_rejected:
       label: Payment Rejected
     shipped:
-      label: Buyer sent goods
+      label: Seller sent goods
     received:
-      label: Seller received goods
+      label: Buyer received goods
     accepted:
       label: Buyer accepted goods
     rejected:
@@ -28,6 +28,10 @@ escrow_workflow:
   transitions:
     place:
       label: 'Place order'
+      from: [ draft ]
+      to: validation
+    offer_made:
+      label: 'Offer made'
       from: [ draft ]
       to: validation
     agree:
@@ -114,7 +118,7 @@ escrow_payment:
       from: [new, pending, received, approved]
       to: rejected
     payment_disbursed:
-      label: 'Payment received'
+      label: 'Payment disbursed'
       from: [new, pending, received, approved, rejected]
       to: completed
     complete:

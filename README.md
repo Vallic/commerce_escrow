@@ -99,6 +99,15 @@ of one order are handled one at a time, and a repeat changes nothing on the orde
 or payment. Subscribers to `ESCROW_WEBHOOK` get repeats too and should allow for
 them.
 
+An Escrow Offer started outside of checkout goes through the
+`commerce_escrow.offer_orders` service. Escrow.com copies the order's id from the
+auction to the transaction, and the payment keeps the auction's token, so both
+exist before the buyer is sent to Escrow.com, but only as a locked draft order:
+out of checkout and not refreshed. The first webhook places it with the
+`offer_made` transition, as an offer isn't a sale: receipts, invoices and taking
+the item off sale don't follow from it. Drafts whose buyer never made the offer
+are deleted by cron after 30 days.
+
 Escrow.com does not sign webhooks. Every webhook is therefore verified by
 fetching the transaction from the Escrow.com API. The transaction must belong
 to the order and confirm the event before the order or payment is updated.

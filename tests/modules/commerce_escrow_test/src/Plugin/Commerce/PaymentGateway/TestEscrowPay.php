@@ -4,6 +4,7 @@ namespace Drupal\commerce_escrow_test\Plugin\Commerce\PaymentGateway;
 
 use Drupal\commerce_escrow\Plugin\Commerce\PaymentGateway\EscrowPay;
 use Drupal\commerce_escrow\PluginForm\OffsiteRedirect\PaymentOffsiteForm;
+use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_payment\Attribute\CommercePaymentGateway;
 use Drupal\Core\State\StateInterface;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
@@ -38,6 +39,20 @@ class TestEscrowPay extends EscrowPay {
     $instance = parent::create($container, $configuration, $plugin_id, $plugin_definition);
     $instance->state = $container->get('state');
     return $instance;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function initiateEscrow(OrderInterface $order): array {
+    if ($this->state->get('commerce_escrow_test.refuse')) {
+      throw new \RuntimeException('Refused.');
+    }
+    return [
+      'make_offer_page' => 'https://escrow.test/offer?token=test',
+      'token' => 'test',
+      'transaction_id' => 900 + (int) $order->id(),
+    ];
   }
 
   /**

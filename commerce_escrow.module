@@ -11,6 +11,13 @@ use Drupal\commerce_order\Adjustment;
 use Drupal\commerce_product\Entity\ProductVariationType;
 
 /**
+ * Implements hook_cron().
+ */
+function commerce_escrow_cron(): void {
+  \Drupal::service('commerce_escrow.offer_orders')->deleteAbandoned();
+}
+
+/**
  * Implements hook_entity_bundle_info_alter().
  */
 function commerce_escrow_entity_bundle_info_alter(array &$bundles): void {

@@ -3,6 +3,7 @@
 namespace Drupal\commerce_escrow\Controller;
 
 use Drupal\commerce_escrow\Entity\EscrowItemInterface;
+use Drupal\commerce_escrow\EscrowOfferOrders;
 use Drupal\commerce_escrow\EscrowWebhookSecret;
 use Drupal\commerce_escrow\Plugin\Commerce\PaymentGateway\EscrowGatewayInterface;
 use Drupal\commerce_order\Entity\OrderInterface;
@@ -47,6 +48,8 @@ class EscrowController extends ControllerBase {
 
   protected EscrowWebhookSecret $webhookSecret;
 
+  protected EscrowOfferOrders $offerOrders;
+
   /**
    * {@inheritdoc}
    */
@@ -57,6 +60,7 @@ class EscrowController extends ControllerBase {
     $instance->orderRefresh = $container->get('commerce_order.order_refresh');
     $instance->lock = $container->get('lock');
     $instance->webhookSecret = $container->get('commerce_escrow.webhook_secret');
+    $instance->offerOrders = $container->get('commerce_escrow.offer_orders');
     return $instance;
   }
 
@@ -76,6 +80,12 @@ class EscrowController extends ControllerBase {
    */
   public function webhook(Request $request): JsonResponse {
     $payload = Json::decode($request->getContent());
+
+    // Customer events, such as a verification, have no order to update. Refusing
+    // them would only make Escrow.com send them again.
+    if (is_array($payload) && ($payload['event_type'] ?? NULL) === 'customer') {
+      return new JsonResponse([]);
+    }
 
     if (!$this->isValidPayload($payload)) {
       return new JsonResponse(['error' => 'invalid payload'], 400);
@@ -159,9 +169,14 @@ class EscrowController extends ControllerBase {
     // When we're dealing with an offer order type, we don't get redirected
     // back. So we need to unlock order and place it.
     if ($order->getState()->getId() === 'draft') {
-      $order->getState()->applyTransitionById('place');
-      $order->unlock();
-      $order->save();
+      if ($this->offerOrders->isOffer($order)) {
+        $this->offerOrders->place($order);
+      }
+      else {
+        $order->getState()->applyTransitionById('place');
+        $order->unlock();
+        $order->save();
+      }
     }
 
     $escrow_offer = $commerce_payment_gateway->getPluginId() === 'escrow_offer';
@@ -200,8 +215,13 @@ class EscrowController extends ControllerBase {
       }
     }
 
-    $payment->setRemoteState($payload['event']);
-    $payment->save();
+    // A verification is about a customer, not the payment. A repeat has nothing
+    // to save, and saving would log the payment as updated.
+    $is_verification = str_starts_with($payload['event'], 'party_verification_');
+    if (!$is_verification && $payment->getRemoteState() !== $payload['event']) {
+      $payment->setRemoteState($payload['event']);
+      $payment->save();
+    }
 
     // During escrow offer, once it's accepted, we need to
     // update Drupal order to match the new amount.

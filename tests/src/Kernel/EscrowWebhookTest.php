@@ -2,7 +2,9 @@
 
 namespace Drupal\Tests\commerce_escrow\Kernel;
 
+use Drupal\commerce_checkout\Controller\CheckoutController;
 use Drupal\commerce_escrow\Controller\EscrowController;
+use Drupal\commerce_escrow\EscrowOfferOrders;
 use Drupal\commerce_escrow\Form\EscrowSettingsForm;
 use Drupal\commerce_order\Entity\Order;
 use Drupal\commerce_order\Entity\OrderInterface;
@@ -13,9 +15,13 @@ use Drupal\commerce_payment\Entity\PaymentGateway;
 use Drupal\commerce_payment\Entity\PaymentGatewayInterface;
 use Drupal\commerce_payment\Entity\PaymentInterface;
 use Drupal\commerce_price\Price;
+use Drupal\commerce_product\Entity\Product;
+use Drupal\commerce_product\Entity\ProductVariation;
+use Drupal\commerce_product\Entity\ProductVariationInterface;
 use Drupal\Component\Serialization\Json;
 use Drupal\Core\Form\FormState;
 use Drupal\Core\Lock\LockBackendInterface;
+use Drupal\Core\Routing\RouteMatch;
 use Drupal\Core\Url;
 use Drupal\Tests\commerce_order\Kernel\OrderKernelTestBase;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -23,6 +29,7 @@ use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Routing\Route;
 
 /**
  * Tests the Escrow.com webhook.
@@ -36,6 +43,8 @@ class EscrowWebhookTest extends OrderKernelTestBase {
    */
   protected static $modules = [
     'commerce_log',
+    'commerce_cart',
+    'commerce_checkout',
     'commerce_payment',
     'commerce_escrow',
     'commerce_escrow_test',
@@ -189,9 +198,12 @@ class EscrowWebhookTest extends OrderKernelTestBase {
   public function testRepeatedEvent(): void {
     [$order, $payment] = $this->orderOn($this->gateways['one']);
     $event = $this->event('payment_approved', $order, $payment);
-    for ($delivery = 0; $delivery < 3; $delivery++) {
+    $this->assertSame(200, $this->post($this->url(), $event, $this->secured())->getStatusCode());
+    $all_logs = $this->container->get('entity_type.manager')->getStorage('commerce_log')->loadMultipleByEntity($order);
+    for ($delivery = 0; $delivery < 2; $delivery++) {
       $this->assertSame(200, $this->post($this->url(), $event, $this->secured())->getStatusCode());
     }
+    $this->assertCount(count($all_logs), $this->container->get('entity_type.manager')->getStorage('commerce_log')->loadMultipleByEntity($order), 'A repeat writes nothing.');
     $this->assertSame('payment_approved', $this->reload($order)->getState()->getId());
     $this->assertSame('approved', $this->reload($payment)->getState()->getId());
     $this->assertCount(1, $this->logs($order));
@@ -220,6 +232,155 @@ class EscrowWebhookTest extends OrderKernelTestBase {
     }
     $this->assertEquals(new Price('100', 'USD'), $this->reload($order)->getTotalPaid());
     $this->assertCount(1, $this->container->get('entity_type.manager')->getStorage('commerce_payment')->loadMultipleByOrder($order));
+  }
+
+  /**
+   * Tests that a verification leaves the payment alone.
+   */
+  public function testVerificationEvent(): void {
+    [$order, $payment] = $this->orderOn($this->gateways['one']);
+    $this->post($this->url(), $this->event('payment_approved', $order, $payment), $this->secured());
+    $this->assertSame('payment_approved', $this->reload($payment)->getRemoteState());
+    foreach (['party_verification_submitted', 'party_verification_approved'] as $event) {
+      $this->assertSame(200, $this->post($this->url(), $this->event($event, $order, $payment), $this->secured())->getStatusCode());
+    }
+    $this->assertSame('payment_approved', $this->reload($payment)->getRemoteState());
+    $this->assertSame('approved', $this->reload($payment)->getState()->getId());
+    $this->assertSame('payment_approved', $this->reload($order)->getState()->getId());
+  }
+
+  /**
+   * Tests the labels of the states a domain goes through.
+   */
+  public function testStateLabels(): void {
+    [$order, $payment] = $this->orderOn($this->gateways['one']);
+    $workflow = $order->getState()->getWorkflow();
+    $this->assertSame('Seller sent goods', (string) $workflow->getState('shipped')->getLabel());
+    $this->assertSame('Buyer received goods', (string) $workflow->getState('received')->getLabel());
+    $this->assertSame('Buyer accepted goods', (string) $workflow->getState('accepted')->getLabel());
+    $this->assertSame('Payment disbursed', (string) $payment->getState()->getWorkflow()->getTransition('payment_disbursed')->getLabel());
+  }
+
+  /**
+   * Tests where Escrow.com sends the buyer of an offer back to.
+   */
+  public function testReturnUrl(): void {
+    $offer_gateway = PaymentGateway::create([
+      'id' => 'offer',
+      'label' => 'Offer',
+      'plugin' => 'escrow_offer',
+      'status' => TRUE,
+      'configuration' => ['api_key' => 'key', 'email' => 'seller@example.com', 'logging' => FALSE, 'mode' => 'test'],
+    ]);
+    $offer_gateway->save();
+    [$order] = $this->orderOn($offer_gateway);
+    $plugin = $offer_gateway->getPlugin();
+    $payload = (new \ReflectionMethod($plugin, 'buildOrderPayload'))->invoke($plugin, $order);
+    $this->assertSame(Url::fromRoute('<front>', [], ['absolute' => TRUE])->toString(), $payload['return_url'], 'An offer has no checkout to return to.');
+  }
+
+  /**
+   * Tests an offer's order: a locked draft until the buyer makes the offer.
+   */
+  public function testOfferOrder(): void {
+    $offers = $this->container->get('commerce_escrow.offer_orders');
+    $variation = $this->offerVariation('offer.com');
+    $buyer = $this->createUser(['access checkout']);
+    $result = $offers->start($this->gateways['one'], $variation, new Price('2000', 'USD'), 'buyer@example.com', $buyer, $this->store, ['name' => 'Ana']);
+    $order = $result['order'];
+    $this->assertSame('https://escrow.test/offer?token=test', $result['response']['make_offer_page']);
+
+    $this->assertSame('draft', $order->getState()->getId());
+    $this->assertTrue($order->isLocked());
+    $this->assertFalse((bool) $order->get('cart')->value);
+    $this->assertEmpty($order->getOrderNumber());
+    $this->assertEmpty($order->getPlacedTime());
+    $this->assertEquals(new Price('2000', 'USD'), $order->getTotalPrice());
+    $this->assertSame(['name' => 'Ana'], $order->getData(EscrowOfferOrders::DATA_KEY));
+    $this->assertFalse($this->container->get('commerce_order.order_refresh')->needsRefresh($order), 'The price stays.');
+
+    // The buyer can't reach it in checkout, even as its customer.
+    $route_match = new RouteMatch('commerce_checkout.form', new Route('/checkout/{commerce_order}'), ['commerce_order' => $order], ['commerce_order' => $order->id()]);
+    $this->assertFalse(CheckoutController::create($this->container)->checkAccess($route_match, $buyer)->isAllowed());
+
+    /** @var \Drupal\commerce_payment\PaymentStorageInterface $payment_storage */
+    $payment_storage = $this->container->get('entity_type.manager')->getStorage('commerce_payment');
+    $payments = $payment_storage->loadMultipleByOrder($order);
+    $this->assertCount(1, $payments);
+    $payment = reset($payments);
+
+    // The first webhook means the offer was made, which is not a sale.
+    $placed = [];
+    $this->container->get('event_dispatcher')->addListener('commerce_order.place.post_transition', function () use (&$placed): void {
+      $placed[] = TRUE;
+    });
+    $event = $this->event('create', $order, $payment);
+    $this->assertSame(200, $this->post($this->url(), $event, $this->secured())->getStatusCode());
+    $order = $this->reload($order);
+    $this->assertSame('validation', $order->getState()->getId());
+    $this->assertFalse($order->isLocked());
+    $this->assertNotEmpty($order->getOrderNumber());
+    $this->assertNotEmpty($order->getPlacedTime());
+
+    $number = $order->getOrderNumber();
+    $this->assertSame(200, $this->post($this->url(), $event, $this->secured())->getStatusCode());
+    $this->assertSame($number, $this->reload($order)->getOrderNumber());
+    $this->assertSame([], $placed);
+    $this->assertCount(1, $payment_storage->loadMultipleByOrder($order));
+  }
+
+  /**
+   * Tests that a refused auction leaves nothing behind.
+   */
+  public function testOfferOrderRefused(): void {
+    $this->container->get('state')->set('commerce_escrow_test.refuse', TRUE);
+    $manager = $this->container->get('entity_type.manager');
+    try {
+      $this->container->get('commerce_escrow.offer_orders')->start($this->gateways['one'], $this->offerVariation('refused.com'), new Price('2000', 'USD'), 'buyer@example.com', $this->createUser(), $this->store);
+      $this->fail('It should throw.');
+    }
+    catch (\RuntimeException $e) {
+      $this->assertSame('Refused.', $e->getMessage());
+    }
+    $this->assertSame([], $manager->getStorage('commerce_order')->loadMultiple());
+    $this->assertSame([], $manager->getStorage('commerce_order_item')->loadMultiple());
+    $this->assertSame([], $manager->getStorage('commerce_payment')->loadMultiple());
+  }
+
+  /**
+   * Tests deleting the drafts of buyers who never made their offer.
+   */
+  public function testDeleteAbandoned(): void {
+    $offers = $this->container->get('commerce_escrow.offer_orders');
+    $manager = $this->container->get('entity_type.manager');
+    $account = $this->createUser();
+    $start = fn(string $domain) => $offers->start($this->gateways['one'], $this->offerVariation($domain), new Price('2000', 'USD'), 'buyer@example.com', $account, $this->store)['order'];
+    $old = $start('old.com');
+    $recent = $start('recent.com');
+    $made = $start('made.com');
+    $offers->place($made);
+
+    // A locked draft that isn't an offer, such as one left mid payment.
+    [$other] = $this->orderOn($this->gateways['one']);
+    $other->set('state', 'draft')->set('cart', FALSE)->lock()->save();
+
+    $long_ago = $this->container->get('datetime.time')->getRequestTime() - 40 * 86400;
+    $this->container->get('database')->update('commerce_order')
+      ->fields(['changed' => $long_ago])
+      ->condition('order_id', [$old->id(), $made->id(), $other->id()], 'IN')
+      ->execute();
+    $manager->getStorage('commerce_order')->resetCache();
+    $payments = $manager->getStorage('commerce_payment');
+    $old_payments = array_keys($payments->loadMultipleByOrder($old));
+    $this->assertNotEmpty($old_payments);
+
+    $this->assertSame(1, $offers->deleteAbandoned());
+    $this->assertNull(Order::load($old->id()));
+    $this->assertSame([], $payments->loadMultiple($old_payments));
+    $this->assertNotNull(Order::load($recent->id()));
+    $this->assertNotNull(Order::load($made->id()));
+    $this->assertNotNull(Order::load($other->id()));
+    $this->assertSame(0, $offers->deleteAbandoned());
   }
 
   /**
@@ -292,6 +453,19 @@ class EscrowWebhookTest extends OrderKernelTestBase {
   public function testIgnoredAndRefused(): void {
     [$order, $payment] = $this->orderOn($this->gateways['one']);
     $event = $this->event('payment_approved', $order, $payment);
+
+    // A customer event, as Escrow.com sends it, has no order.
+    $customer_event = [
+      'event' => 'verification_approved',
+      'event_type' => 'customer',
+      'customer_id' => 1,
+      'party_id' => 2,
+      'transaction_id' => (int) $payment->getRemoteId(),
+      'details' => [],
+    ];
+    $this->assertSame(200, $this->post($this->url(), $customer_event, $this->secured())->getStatusCode());
+    $this->assertSame(403, $this->post('/payment/webhook/escrow/wrong', $customer_event, $this->secured())->getStatusCode());
+    $this->assertSame('new', $this->reload($payment)->getState()->getId());
 
     // Another site's order on the same Escrow.com account.
     $this->assertSame(200, $this->post($this->url(), ['reference' => 99999] + $event, $this->secured())->getStatusCode());
@@ -369,7 +543,7 @@ class EscrowWebhookTest extends OrderKernelTestBase {
   }
 
   /**
-   * Tests removing the secrets gateways had in 1.1.
+   * Tests cleaning up the gateway settings no longer used.
    */
   public function testPostUpdate(): void {
     $name = 'commerce_payment.commerce_payment_gateway.old';
@@ -388,12 +562,33 @@ class EscrowWebhookTest extends OrderKernelTestBase {
     $config_factory->reset($name);
 
     $this->container->get('module_handler')->loadInclude('commerce_escrow', 'php', 'commerce_escrow.post_update');
-    commerce_escrow_post_update_remove_gateway_webhook_secrets();
+    commerce_escrow_post_update_unused_gateway_settings();
 
     $configuration = $config_factory->getEditable($name)->get('configuration');
     $this->assertArrayNotHasKey('webhook_secret', $configuration);
     $this->assertSame('stored', $configuration['api_key']);
     $this->assertSame($other_data, $config_factory->getEditable($other)->getRawData());
+  }
+
+  /**
+   * Creates something to negotiate.
+   */
+  protected function offerVariation(string $sku): ProductVariationInterface {
+    $variation = ProductVariation::create([
+      'type' => 'default',
+      'sku' => $sku,
+      'title' => $sku,
+      'price' => new Price('2000', 'USD'),
+      'status' => TRUE,
+    ]);
+    $variation->save();
+    Product::create([
+      'type' => 'default',
+      'title' => $sku,
+      'stores' => [$this->store],
+      'variations' => [$variation],
+    ])->save();
+    return ProductVariation::load($variation->id());
   }
 
   /**

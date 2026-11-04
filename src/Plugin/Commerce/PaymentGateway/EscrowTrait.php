@@ -169,6 +169,8 @@ trait EscrowTrait {
     // @see https://www.escrow.com/offer/docs.
     if ($escrow_offer) {
       $payload['listing_reference'] = $order->id();
+      // An offer has no checkout to return to, webhooks follow it from here.
+      $payload['return_url'] = Url::fromRoute('<front>', [], ['absolute' => TRUE])->toString();
       $buyer = 'buyer_user';
     }
 
