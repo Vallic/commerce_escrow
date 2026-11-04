@@ -24,7 +24,6 @@ include:
 ################
 variables:
 #  _CSPELL_WORDS: ''
-  OPT_IN_TEST_PREVIOUS_MAJOR: 1
 #   SKIP_ESLINT: '1'
 #   OPT_IN_TEST_NEXT_MAJOR: '1'
 #   _CURL_TEMPLATES_REF: 'main'

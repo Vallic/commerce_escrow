@@ -101,7 +101,9 @@ escrow_payment:
       to: pending
     payment_received:
       label: 'Payment received'
-      from: [new, pending, approved, rejected]
+      # Not from approved: Escrow.com secured the money by then, and a late or
+      # repeated webhook must not move the payment back.
+      from: [new, pending, rejected]
       to: received
     payment_approved:
       label: 'Payment approved'

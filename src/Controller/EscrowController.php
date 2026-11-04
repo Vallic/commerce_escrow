@@ -3,7 +3,9 @@
 namespace Drupal\commerce_escrow\Controller;
 
 use Drupal\commerce_escrow\Entity\EscrowItemInterface;
+use Drupal\commerce_escrow\EscrowWebhookSecret;
 use Drupal\commerce_escrow\Plugin\Commerce\PaymentGateway\EscrowGatewayInterface;
+use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_payment\Entity\PaymentGatewayInterface;
 use Drupal\commerce_price\Price;
 use Drupal\commerce_escrow\Event\EscrowEvents;
@@ -12,6 +14,7 @@ use Drupal\Component\Serialization\Json;
 use Drupal\Core\Access\AccessResult;
 use Drupal\Core\Access\AccessResultInterface;
 use Drupal\Core\Controller\ControllerBase;
+use Drupal\Core\Lock\LockBackendInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -25,9 +28,25 @@ class EscrowController extends ControllerBase {
    */
   protected const array FEE_ITEM_TYPES = ['broker_fee', 'partner_fee', 'shipping_fee'];
 
+  /**
+   * Seconds the lock on an order lasts if a webhook dies holding it.
+   */
+  protected const float LOCK_TIMEOUT = 30.0;
+
+  /**
+   * Seconds to wait for another webhook of the same order.
+   *
+   * Short of the 10 seconds Escrow.com waits for an answer.
+   */
+  protected const int LOCK_WAIT = 5;
+
   protected EventDispatcherInterface $eventDispatcher;
 
   protected OrderRefreshInterface $orderRefresh;
+
+  protected LockBackendInterface $lock;
+
+  protected EscrowWebhookSecret $webhookSecret;
 
   /**
    * {@inheritdoc}
@@ -37,19 +56,73 @@ class EscrowController extends ControllerBase {
     $instance->entityTypeManager = $container->get('entity_type.manager');
     $instance->eventDispatcher = $container->get('event_dispatcher');
     $instance->orderRefresh = $container->get('commerce_order.order_refresh');
+    $instance->lock = $container->get('lock');
+    $instance->webhookSecret = $container->get('commerce_escrow.webhook_secret');
     return $instance;
   }
 
   /**
-   * Checks the secret token of the payment gateway webhook URL.
+   * Checks the secret token of the webhook URL.
    */
-  public function access(PaymentGatewayInterface $commerce_payment_gateway, string $token): AccessResultInterface {
-    $plugin = $commerce_payment_gateway->getPlugin();
-    return AccessResult::allowedIf($plugin instanceof EscrowGatewayInterface && $plugin->isValidWebhookToken($token));
+  public function access(string $token): AccessResultInterface {
+    return AccessResult::allowedIf($this->webhookSecret->isValid($token))->setCacheMaxAge(0);
   }
 
   /**
-   * Process Escrow webhooks.
+   * Checks the secret token of a payment gateway's webhook URL from 1.1.0.
+   */
+  public function gatewayAccess(PaymentGatewayInterface $commerce_payment_gateway, string $token): AccessResultInterface {
+    $plugin = $commerce_payment_gateway->getPlugin();
+    return AccessResult::allowedIf($plugin instanceof EscrowGatewayInterface && $plugin->isValidWebhookToken($token))->setCacheMaxAge(0);
+  }
+
+  /**
+   * Handles the webhook shared by all Escrow payment gateways.
+   */
+  public function webhook(Request $request): JsonResponse {
+    return $this->handleWebhook($request);
+  }
+
+  /**
+   * Handles a payment gateway's webhook from 1.1.0, for its own orders only.
+   */
+  public function gatewayWebhook(PaymentGatewayInterface $commerce_payment_gateway, Request $request): JsonResponse {
+    return $this->handleWebhook($request, $commerce_payment_gateway);
+  }
+
+  /**
+   * Handles a webhook, one at a time for each order.
+   *
+   * Escrow.com retries a webhook that fails or takes over 10 seconds, so the
+   * same event can arrive again, even while the first is still being handled.
+   * The one that waits then finds the order already updated.
+   */
+  protected function handleWebhook(Request $request, ?PaymentGatewayInterface $only_gateway = NULL): JsonResponse {
+    $payload = Json::decode($request->getContent());
+
+    if (!$this->isValidPayload($payload)) {
+      return new JsonResponse(['error' => 'invalid payload'], 400);
+    }
+
+    $lock_name = 'commerce_escrow_webhook:' . $payload['reference'];
+    if (!$this->lock->acquire($lock_name, self::LOCK_TIMEOUT)) {
+      $this->lock->wait($lock_name, self::LOCK_WAIT);
+      if (!$this->lock->acquire($lock_name, self::LOCK_TIMEOUT)) {
+        // Escrow.com sends it again later.
+        return new JsonResponse(['error' => 'busy'], 503);
+      }
+    }
+
+    try {
+      return $this->processWebhook($payload, $only_gateway);
+    }
+    finally {
+      $this->lock->release($lock_name);
+    }
+  }
+
+  /**
+   * Processes an Escrow webhook.
    *
    * Escrow.com does not sign webhooks, so the payload is only used to know
    * which transaction changed. The transaction is fetched from the API and
@@ -57,29 +130,27 @@ class EscrowController extends ControllerBase {
    *
    * @see https://www.escrow.com/api/docs/webhooks
    */
-  public function webhook(PaymentGatewayInterface $commerce_payment_gateway, Request $request): JsonResponse {
-    $body = $request->getContent();
-    $payload = Json::decode($body);
-
-    if (!$this->isValidPayload($payload)) {
-      return new JsonResponse(['error' => 'invalid payload'], 400);
-    }
-
+  protected function processWebhook(array $payload, ?PaymentGatewayInterface $only_gateway): JsonResponse {
     $transaction_id = (int) $payload['transaction_id'];
     $logger = $this->getLogger('commerce_escrow');
     $order_storage = $this->entityTypeManager->getStorage('commerce_order');
 
-    /** @var \Drupal\commerce_order\Entity\OrderInterface $order */
-    $order = $order_storage->load($payload['reference']);
+    // Unchanged, as a webhook may just have updated it.
+    /** @var \Drupal\commerce_order\Entity\OrderInterface|null $order */
+    $order = $order_storage->loadUnchanged($payload['reference']);
+
+    /** @var \Drupal\commerce_payment\Entity\PaymentGatewayInterface|null $commerce_payment_gateway */
+    $commerce_payment_gateway = $order?->get('payment_gateway')->entity;
+    $payment_gateway_plugin = $commerce_payment_gateway?->getPlugin();
 
     // Escrow.com sends events of all transactions on the account to every
-    // webhook, ignore orders which are not paid through this gateway.
-    if (!$order || $order->get('payment_gateway')->target_id !== $commerce_payment_gateway->id()) {
+    // webhook, ignore orders which are not paid through an Escrow gateway.
+    if (!$payment_gateway_plugin instanceof EscrowGatewayInterface) {
       return new JsonResponse([]);
     }
-
-    /** @var \Drupal\commerce_escrow\Plugin\Commerce\PaymentGateway\EscrowGatewayInterface $payment_gateway_plugin */
-    $payment_gateway_plugin = $commerce_payment_gateway->getPlugin();
+    if ($only_gateway && $only_gateway->id() !== $commerce_payment_gateway->id()) {
+      return new JsonResponse([]);
+    }
 
     try {
       $transaction = $payment_gateway_plugin->getTransaction($transaction_id);
@@ -195,12 +266,13 @@ class EscrowController extends ControllerBase {
 
     $event = $payload['event'];
 
-    $log_storage = $this->entityTypeManager->getStorage('commerce_log');
-
-    $log_storage->generate($order, 'escrow_event', [
-      'description' => EscrowItemInterface::ESCROW_TRANSACTION_EVENTS[$payload['event']] ?? '',
-      'transaction_id' => $transaction_id,
-    ])->save();
+    if (!$this->isLastLoggedEvent($order, $event, $transaction_id)) {
+      $this->entityTypeManager->getStorage('commerce_log')->generate($order, 'escrow_event', [
+        'description' => EscrowItemInterface::ESCROW_TRANSACTION_EVENTS[$payload['event']] ?? '',
+        'transaction_id' => $transaction_id,
+        'event' => $event,
+      ])->save();
+    }
 
     $transitions = $order->getState()->getTransitions();
 
@@ -216,6 +288,23 @@ class EscrowController extends ControllerBase {
     }
 
     return new JsonResponse([]);
+  }
+
+  /**
+   * Determines whether the order's latest Escrow log entry is this event.
+   *
+   * It then arrived again, and the log needs no second line for it.
+   */
+  protected function isLastLoggedEvent(OrderInterface $order, string $event, int $transaction_id): bool {
+    /** @var \Drupal\commerce_log\LogStorageInterface $log_storage */
+    $log_storage = $this->entityTypeManager->getStorage('commerce_log');
+    $logs = array_filter($log_storage->loadMultipleByEntity($order), static fn($log) => $log->getTemplateId() === 'escrow_event');
+    if (!$logs) {
+      return FALSE;
+    }
+    ksort($logs);
+    $params = end($logs)->getParams();
+    return ($params['event'] ?? NULL) === $event && (int) ($params['transaction_id'] ?? 0) === $transaction_id;
   }
 
   /**

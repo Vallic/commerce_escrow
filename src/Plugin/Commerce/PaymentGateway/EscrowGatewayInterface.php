@@ -46,12 +46,12 @@ interface EscrowGatewayInterface extends SupportsVoidsInterface {
   public function loadOrderPayments(OrderInterface $order): array;
 
   /**
-   * Get the webhook URL to register on Escrow.com.
+   * Get the webhook URL to register on Escrow.com, shared by all gateways.
    */
   public function getWebhookUrl(): ?Url;
 
   /**
-   * Validate the secret token from the webhook URL.
+   * Validate the secret token of this gateway's own webhook URL from 1.1.0.
    */
   public function isValidWebhookToken(string $token): bool;
 

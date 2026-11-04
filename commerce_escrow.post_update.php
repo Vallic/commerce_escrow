@@ -5,24 +5,17 @@
  * Post update functions for Commerce Escrow.
  */
 
-use Drupal\Component\Utility\Crypt;
+/**
+ * Formerly generated a secret webhook URL for each Escrow payment gateway.
+ */
+function commerce_escrow_post_update_webhook_secret(): void {
+  // Superseded by the shared URL of the update below.
+}
 
 /**
- * Generate secret webhook URLs for existing Escrow payment gateways.
+ * Generate the webhook URL shared by all Escrow payment gateways.
  */
-function commerce_escrow_post_update_webhook_secret(): string {
-  $payment_gateway_storage = \Drupal::entityTypeManager()->getStorage('commerce_payment_gateway');
-  /** @var \Drupal\commerce_payment\Entity\PaymentGatewayInterface[] $payment_gateways */
-  $payment_gateways = $payment_gateway_storage->loadByProperties(['plugin' => ['escrow_pay', 'escrow_offer']]);
-
-  foreach ($payment_gateways as $payment_gateway) {
-    $configuration = $payment_gateway->getPluginConfiguration();
-    if (empty($configuration['webhook_secret'])) {
-      $configuration['webhook_secret'] = Crypt::randomBytesBase64(32);
-      $payment_gateway->setPluginConfiguration($configuration);
-      $payment_gateway->save();
-    }
-  }
-
-  return (string) t('The Escrow.com webhook URL changed and the old one no longer works. Copy the new URL from each Escrow payment gateway configuration and register it on Escrow.com.');
+function commerce_escrow_post_update_shared_webhook(): string {
+  \Drupal::service('commerce_escrow.webhook_secret')->get();
+  return (string) t('All Escrow payment gateways now share one webhook URL. Copy it from any Escrow payment gateway and register it on Escrow.com, then delete any older Escrow webhooks of this site there. A URL per gateway from 1.1.0 keeps working until you stop accepting it on the payment gateway.');
 }

@@ -1,4 +1,7 @@
 services:
+  commerce_escrow.webhook_secret:
+    class: Drupal\commerce_escrow\EscrowWebhookSecret
+    arguments: ['@state']
   commerce_escrow.availability_checker:
     class: Drupal\commerce_escrow\EscrowItemAvailabilityChecker
     tags:

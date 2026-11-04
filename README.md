@@ -68,15 +68,25 @@ Now that product variation type will get several Escrow specific fields.
 * In stock: a flag to determine if product is in stock, depends on Single item logic.
 
 ## Webhook configuration
-Each Escrow payment gateway has its own webhook URL with a secret token,
-shown on the payment gateway configuration form after the gateway is saved:
-`https://yourwebsite.com/payment/webhook/escrow/{payment_gateway}/{token}`
+All Escrow payment gateways share one webhook URL with a secret token, shown on
+the configuration form of any of them:
+`https://yourwebsite.com/payment/webhook/escrow/{token}`
 
-Register that URL as a webhook on Escrow.com. Keep it private like the API key,
-and regenerate it from the same form if it leaks. Escrow.com sends every event
-on the account to every registered webhook, so when several gateways share an
-Escrow.com account, register the URL of each of them. Each webhook processes
-only orders paid through its own gateway.
+Register that URL as a webhook on Escrow.com, once on each Escrow.com account
+the gateways use. The order decides which gateway handles an event. Keep the URL
+private like the API key, and regenerate it from the same form if it leaks. The
+token is kept in State, so each environment has its own and it stays out of
+exported configuration.
+
+Upgrading from 1.1.0, where each gateway had its own URL: those keep working, for
+that gateway's orders. Register the shared URL and delete the old ones on
+Escrow.com, then tick *Stop accepting the old webhook URL* on each gateway. An
+event that arrives on both in between is safe.
+
+Escrow.com retries webhooks, so the same event can arrive more than once. Webhooks
+of one order are handled one at a time, and a repeat changes nothing on the order
+or payment. Subscribers to `ESCROW_WEBHOOK` get repeats too and should allow for
+them.
 
 Escrow.com does not sign webhooks. Every webhook is therefore verified by
 fetching the transaction from the Escrow.com API. The transaction must belong

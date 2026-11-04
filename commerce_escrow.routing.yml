@@ -1,11 +1,22 @@
 commerce_escrow.webhook:
-  path: '/payment/webhook/escrow/{commerce_payment_gateway}/{token}'
+  path: '/payment/webhook/escrow/{token}'
   defaults:
     _controller: '\Drupal\commerce_escrow\Controller\EscrowController::webhook'
     _title: 'Webhook'
   methods: [POST]
   requirements:
     _custom_access: '\Drupal\commerce_escrow\Controller\EscrowController::access'
+    token: '[A-Za-z0-9_-]+'
+
+# The per gateway URL of 1.1.0. It works until the gateway's secret is removed.
+commerce_escrow.gateway_webhook:
+  path: '/payment/webhook/escrow/{commerce_payment_gateway}/{token}'
+  defaults:
+    _controller: '\Drupal\commerce_escrow\Controller\EscrowController::gatewayWebhook'
+    _title: 'Webhook'
+  methods: [POST]
+  requirements:
+    _custom_access: '\Drupal\commerce_escrow\Controller\EscrowController::gatewayAccess'
     token: '[A-Za-z0-9_-]+'
   options:
     parameters:
