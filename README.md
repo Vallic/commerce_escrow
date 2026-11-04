@@ -74,9 +74,25 @@ the configuration form of any of them:
 
 Register that URL as a webhook on Escrow.com, once on each Escrow.com account
 the gateways use. The order decides which gateway handles an event. Keep the URL
-private like the API key, and regenerate it from the same form if it leaks. The
-token is kept in State, so each environment has its own and it stays out of
-exported configuration.
+private like the API key.
+
+The token is generated the first time it is needed, and stored as `webhook_secret`
+in `commerce_escrow.settings`, so a configuration export includes it. It is better
+to set it in `settings.php` from an environment variable, which keeps it out of the
+database and exported configuration, and gives each environment its own:
+
+```php
+$config['commerce_escrow.settings']['webhook_secret'] = getenv('ESCROW_WEBHOOK_SECRET');
+```
+
+Generate the value with `openssl rand -hex 32`. It may hold only letters, digits,
+`-` and `_`. If the variable is not set, the webhook stays closed rather than
+falling back to another value, and the payment gateway form says so. Without an
+override, you can regenerate the token from the same form if it leaks.
+
+Configuration imports remove settings that aren't exported, so if your deployment
+imports configuration, also export `commerce_escrow.settings`. With the override
+in place the exported value stays empty.
 
 Upgrading from 1.1.0, where each gateway had its own URL: those keep working, for
 that gateway's orders. Register the shared URL and delete the old ones on

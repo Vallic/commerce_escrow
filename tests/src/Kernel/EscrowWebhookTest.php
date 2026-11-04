@@ -16,6 +16,7 @@ use Drupal\Component\Serialization\Json;
 use Drupal\Core\Form\FormState;
 use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Tests\commerce_order\Kernel\OrderKernelTestBase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use Symfony\Component\HttpFoundation\Request;
@@ -57,7 +58,7 @@ class EscrowWebhookTest extends OrderKernelTestBase {
     parent::setUp();
     $this->installEntitySchema('commerce_payment');
     $this->installEntitySchema('commerce_log');
-    $this->installConfig(['commerce_payment']);
+    $this->installConfig(['commerce_payment', 'commerce_escrow']);
     $this->container->get('router.builder')->rebuild();
     OrderType::load('default')->setWorkflowId('escrow_workflow')->save();
     foreach (['one', 'two'] as $id) {
@@ -80,7 +81,66 @@ class EscrowWebhookTest extends OrderKernelTestBase {
     $this->assertSame($one, $this->gateways['two']->getPlugin()->getWebhookUrl()->toString());
     $this->assertStringEndsWith('/payment/webhook/escrow/' . $this->secret(), $one);
     $this->assertSame(43, strlen($this->secret()));
-    $this->assertEmpty($this->gateways['one']->getPluginConfiguration()['webhook_secret'] ?? '', 'The secret is not in configuration.');
+    $this->assertEmpty($this->gateways['one']->getPluginConfiguration()['webhook_secret'] ?? '', 'The secret is not on the gateway.');
+    $this->assertSame($this->secret(), $this->config('commerce_escrow.settings')->get('webhook_secret'));
+  }
+
+  /**
+   * Tests a secret set in settings.php.
+   */
+  public function testSecretFromSettings(): void {
+    [$order, $payment] = $this->orderOn($this->gateways['one']);
+    $event = $this->event('payment_approved', $order, $payment);
+    $secret = $this->container->get('commerce_escrow.webhook_secret');
+    $plugin = $this->gateways['one']->getPlugin();
+
+    $this->override('from-settings-php');
+    $this->assertTrue($secret->isOverridden());
+    $this->assertSame('from-settings-php', $secret->get());
+    $this->assertStringEndsWith('/payment/webhook/escrow/from-settings-php', $plugin->getWebhookUrl()->toString());
+    $this->assertSame('', (string) $this->container->get('config.factory')->getEditable('commerce_escrow.settings')->get('webhook_secret'), 'Nothing is stored.');
+    $this->assertArrayNotHasKey('regenerate_webhook_secret', $plugin->buildConfigurationForm(['#parents' => []], new FormState()));
+    $this->assertSame(200, $this->post('/payment/webhook/escrow/from-settings-php', $event, $this->secured())->getStatusCode());
+    $this->assertSame('payment_approved', $this->reload($order)->getState()->getId());
+
+    // A stored secret doesn't open the URL while it is overridden.
+    $secret->regenerate();
+    $stored = $this->container->get('config.factory')->getEditable('commerce_escrow.settings')->get('webhook_secret');
+    $this->assertNotEmpty($stored);
+    $this->assertFalse($secret->isValid($stored));
+    $this->assertTrue($secret->isValid('from-settings-php'));
+  }
+
+  /**
+   * Tests that an environment variable that isn't set closes the webhook.
+   *
+   * @param mixed $value
+   *   What settings.php overrides the secret with; getenv() returns FALSE.
+   */
+  #[DataProvider('emptyOverrides')]
+  public function testEmptyOverrideClosesWebhook(mixed $value): void {
+    // A stored secret must not stand in for the missing one.
+    $this->secret();
+    $this->override($value);
+    $secret = $this->container->get('commerce_escrow.webhook_secret');
+    $plugin = $this->gateways['one']->getPlugin();
+
+    $this->assertSame('', $secret->get());
+    $this->assertFalse($secret->isValid(''));
+    $this->assertNull($plugin->getWebhookUrl());
+    $form = $plugin->buildConfigurationForm(['#parents' => []], new FormState());
+    $this->assertStringContainsString('overridden with an empty value', (string) $form['webhook_url']['#plain_text']);
+    $this->assertArrayNotHasKey('regenerate_webhook_secret', $form);
+    [$order, $payment] = $this->orderOn($this->gateways['one']);
+    $this->assertSame(403, $this->post('/payment/webhook/escrow/anything', $this->event('payment_approved', $order, $payment), $this->secured())->getStatusCode());
+    $this->assertSame('validation', $this->reload($order)->getState()->getId());
+  }
+
+  /**
+   * Returns the empty values an override can have.
+   */
+  public static function emptyOverrides(): array {
+    return ['getenv() of a missing variable' => [FALSE], 'an empty string' => ['']];
   }
 
   /**
@@ -397,6 +457,14 @@ class EscrowWebhookTest extends OrderKernelTestBase {
     // context on GET. Each webhook is a new process on a real site.
     $this->container->get('router.no_access_checks')->getContext()->setMethod('POST');
     return $this->container->get('http_kernel')->handle($request);
+  }
+
+  /**
+   * Overrides the secret as settings.php does.
+   */
+  protected function override(mixed $value): void {
+    $GLOBALS['config']['commerce_escrow.settings']['webhook_secret'] = $value;
+    $this->container->get('config.factory')->reset('commerce_escrow.settings');
   }
 
   /**

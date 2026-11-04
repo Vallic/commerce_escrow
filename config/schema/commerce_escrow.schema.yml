@@ -1,0 +1,7 @@
+commerce_escrow.settings:
+  type: config_object
+  label: 'Commerce Escrow settings'
+  mapping:
+    webhook_secret:
+      type: string
+      label: 'The secret at the end of the webhook URL'

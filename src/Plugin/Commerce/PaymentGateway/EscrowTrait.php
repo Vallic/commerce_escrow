@@ -93,18 +93,22 @@ trait EscrowTrait {
       '#default_value' => $this->configuration['logging'],
     ];
 
+    $webhook_url = $this->getWebhookUrl();
     $form['webhook_url'] = [
       '#type' => 'item',
       '#title' => $this->t('Webhook URL'),
-      '#plain_text' => $this->getWebhookUrl()->toString(),
+      '#plain_text' => $webhook_url ? $webhook_url->toString() : $this->t('Not available: the webhook secret is overridden with an empty value in settings.php.'),
       '#description' => $this->t('Register this URL once on each Escrow.com account, as all Escrow payment gateways share it. It contains a secret, keep it private like the API key.'),
     ];
 
-    $form['regenerate_webhook_secret'] = [
-      '#type' => 'checkbox',
-      '#title' => $this->t('Regenerate the webhook URL'),
-      '#description' => $this->t('The current URL stops working immediately for all Escrow payment gateways, update the webhook on Escrow.com afterwards.'),
-    ];
+    // A value from settings.php can't be changed here.
+    if (!$this->webhookSecret->isOverridden()) {
+      $form['regenerate_webhook_secret'] = [
+        '#type' => 'checkbox',
+        '#title' => $this->t('Regenerate the webhook URL'),
+        '#description' => $this->t('The current URL stops working immediately for all Escrow payment gateways, update the webhook on Escrow.com afterwards. The secret is stored in configuration: override it in settings.php to keep it out of the database and exported configuration.'),
+      ];
+    }
 
     if (!empty($this->configuration['webhook_secret'])) {
       $form['remove_gateway_webhook'] = [
@@ -411,8 +415,9 @@ trait EscrowTrait {
    * {@inheritdoc}
    */
   public function getWebhookUrl(): ?Url {
-    return Url::fromRoute('commerce_escrow.webhook', [
-      'token' => $this->webhookSecret->get(),
+    $secret = $this->webhookSecret->get();
+    return $secret === '' ? NULL : Url::fromRoute('commerce_escrow.webhook', [
+      'token' => $secret,
     ], ['absolute' => TRUE]);
   }
 

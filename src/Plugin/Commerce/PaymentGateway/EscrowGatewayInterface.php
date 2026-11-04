@@ -47,6 +47,9 @@ interface EscrowGatewayInterface extends SupportsVoidsInterface {
 
   /**
    * Get the webhook URL to register on Escrow.com, shared by all gateways.
+   *
+   * @return \Drupal\Core\Url|null
+   *   The URL, or NULL if settings.php overrides the secret with an empty value.
    */
   public function getWebhookUrl(): ?Url;
 
