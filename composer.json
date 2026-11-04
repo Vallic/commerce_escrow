@@ -3,7 +3,7 @@
     "type": "drupal-module",
     "description": "Provides Commerce integration for Escrow.com",
     "homepage": "http://drupal.org/project/commerce_escrow",
-    "license": "GPL-2.0+",
+    "license": "GPL-2.0-or-later",
     "require": {
         "drupal/core": "^11 || ^12",
         "drupal/commerce": "^3"

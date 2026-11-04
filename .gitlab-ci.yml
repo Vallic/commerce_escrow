@@ -23,7 +23,19 @@ include:
 # Uncomment the lines below if you want to override any of the variables. The following is just an example.
 ################
 variables:
-#  _CSPELL_WORDS: ''
-#   SKIP_ESLINT: '1'
-#   OPT_IN_TEST_NEXT_MAJOR: '1'
-#   _CURL_TEMPLATES_REF: 'main'
+  # Drupal 11 on PHP 8.4 is the baseline; also test the next major, so the code
+  # stays ready for Drupal 12.
+  _TARGET_PHP: '8.4'
+  OPT_IN_TEST_NEXT_MAJOR: 1
+  OPT_IN_TEST_PREVIOUS_MAJOR: 0
+  # Opting in only offers the variant as manual jobs; run them on every push
+  # and merge request.
+  _AUTORUN_NEXT_MAJOR: 'all'
+  # Dependencies without a Drupal 12 release yet, so the next major jobs can
+  # install them. Commerce submodules are packages of their own here.
+  _LENIENT_ALLOW_LIST: 'address,commerce,commerce_log,commerce_number_pattern,commerce_order,commerce_payment,commerce_price,commerce_product,commerce_store,entity,entity_reference_revisions,inline_entity_form,profile,state_machine,token'
+  # Kernel tests run in separate processes; run test classes in parallel.
+  _PHPUNIT_CONCURRENT: 1
+  # No JavaScript or CSS to lint.
+  SKIP_ESLINT: 1
+  SKIP_STYLELINT: 1

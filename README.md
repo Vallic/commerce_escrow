@@ -116,3 +116,8 @@ $payload = [
 ];
 $client->createTransaction($payload);
 ```
+
+## Maintainers
+
+Developed and maintained by [Vallic](https://vallic.com), a Drupal development
+company and the team behind Vallic Cloud, Drupal hosting.
