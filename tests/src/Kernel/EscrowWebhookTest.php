@@ -4,8 +4,11 @@ namespace Drupal\Tests\commerce_escrow\Kernel;
 
 use Drupal\commerce_checkout\Controller\CheckoutController;
 use Drupal\commerce_escrow\Controller\EscrowController;
+use Drupal\commerce_escrow\Entity\EscrowItem;
+use Drupal\commerce_escrow\Entity\EscrowItemInterface;
 use Drupal\commerce_escrow\EscrowOfferOrders;
 use Drupal\commerce_escrow\Form\EscrowSettingsForm;
+use Drupal\commerce_escrow\Hook\EscrowHooks;
 use Drupal\commerce_order\Entity\Order;
 use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_order\Entity\OrderItem;
@@ -18,6 +21,7 @@ use Drupal\commerce_price\Price;
 use Drupal\commerce_product\Entity\Product;
 use Drupal\commerce_product\Entity\ProductVariation;
 use Drupal\commerce_product\Entity\ProductVariationInterface;
+use Drupal\commerce_product\Entity\ProductVariationType;
 use Drupal\Component\Serialization\Json;
 use Drupal\Core\Form\FormState;
 use Drupal\Core\Lock\LockBackendInterface;
@@ -381,6 +385,63 @@ class EscrowWebhookTest extends OrderKernelTestBase {
     $this->assertNotNull(Order::load($made->id()));
     $this->assertNotNull(Order::load($other->id()));
     $this->assertSame(0, $offers->deleteAbandoned());
+  }
+
+  /**
+   * Tests that cron deletes abandoned drafts through the hook.
+   */
+  public function testCronHook(): void {
+    $order = $this->container->get('commerce_escrow.offer_orders')->start($this->gateways['one'], $this->offerVariation('cron.com'), new Price('2000', 'USD'), 'buyer@example.com', $this->createUser(), $this->store)['order'];
+    $this->container->get('database')->update('commerce_order')
+      ->fields(['changed' => $this->container->get('datetime.time')->getRequestTime() - 40 * 86400])
+      ->condition('order_id', $order->id())
+      ->execute();
+    $this->container->get('entity_type.manager')->getStorage('commerce_order')->resetCache();
+    $this->container->get('module_handler')->invoke('commerce_escrow', 'cron');
+    $this->assertNull(Order::load($order->id()));
+  }
+
+  /**
+   * Tests the variation class and the fee on the order summary.
+   */
+  public function testEscrowItemHooks(): void {
+    $bundle_info = $this->container->get('entity_type.bundle.info');
+    $this->assertNotSame(EscrowItem::class, $bundle_info->getBundleInfo('commerce_product_variation')['default']['class'] ?? NULL);
+    $variation_without_trait = $this->offerVariation('plain.com');
+    $this->assertNotInstanceOf(EscrowItemInterface::class, $variation_without_trait);
+
+    $trait_manager = $this->container->get('plugin.manager.commerce_entity_trait');
+    $trait_manager->installTrait($trait_manager->createInstance('purchasable_entity_escrow_item'), 'commerce_product_variation', 'default');
+    ProductVariationType::load('default')->setTraits(['purchasable_entity_escrow_item'])->save();
+    $bundle_info->clearCachedBundles();
+    $this->container->get('entity_type.manager')->clearCachedDefinitions();
+    $this->assertSame(EscrowItem::class, $bundle_info->getBundleInfo('commerce_product_variation')['default']['class']);
+
+    $variation = $this->offerVariation('fee.com');
+    $this->assertInstanceOf(EscrowItemInterface::class, $variation);
+    $item = $this->container->get('entity_type.manager')->getStorage('commerce_order_item')->createFromPurchasableEntity($variation, ['quantity' => 1]);
+    $item->setUnitPrice(new Price('2000', 'USD'), TRUE)->save();
+    $order = Order::create([
+      'type' => 'default',
+      'store_id' => $this->store->id(),
+      'state' => 'draft',
+      'order_items' => [$item],
+    ]);
+    $order->save();
+
+    $summary = function () use ($order): array {
+      $variables = ['order_entity' => $order, 'totals' => ['adjustments' => []]];
+      $this->container->get(EscrowHooks::class)->preprocessOrderTotalSummary($variables);
+      return $variables['totals']['adjustments'];
+    };
+    $this->assertSame([], $summary(), 'No fee unless the variation displays it.');
+
+    $variation->set('display_fee', TRUE)->save();
+    $item->set('purchased_entity', $variation)->save();
+    $adjustments = $summary();
+    $this->assertCount(1, $adjustments);
+    $this->assertSame('Estimated fees to be paid on Escrow.com', (string) $adjustments[0]['label']);
+    $this->assertTrue($this->container->get('module_handler')->hasImplementations('preprocess_commerce_order_total_summary', 'commerce_escrow'));
   }
 
   /**

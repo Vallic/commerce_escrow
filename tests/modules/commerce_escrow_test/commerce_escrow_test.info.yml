@@ -2,6 +2,6 @@ name: 'Commerce Escrow test'
 type: module
 description: 'An Escrow payment gateway that answers without calling Escrow.com.'
 package: Testing
-core_version_requirement: ^11 || ^12
+core_version_requirement: ^11.4 || ^12
 dependencies:
   - commerce_escrow:commerce_escrow
